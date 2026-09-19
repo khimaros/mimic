@@ -46,13 +46,106 @@ def test_http_dump_compact_is_terse(token):
     assert s == 200 and b["ok"]
     assert isinstance(b["data"], str)
     for line in b["data"].splitlines():
-        assert "\t" in line and "," in line.split("\t", 1)[0]
+        # the documented default columns: cx,cy<TAB>class<TAB>label<TAB>id.
+        assert len(line.split("\t")) == 4, line
+        assert "," in line.split("\t", 1)[0]
+
+
+# ---- the element table an agent acts on ----
+# an agent surveys a screen with `dump --filter interactive --format compact` and
+# taps a row by its label. these cover what that table has to carry to be usable.
+
+# the actions a node must support to be worth offering as a target.
+ACTIONABLE = {"click", "long", "edit", "scroll", "check"}
+
+
+def _settings_main():
+    """the settings main screen: clickable rows whose labels live in children."""
+    adb.shell("am", "start", "-a", "android.settings.SETTINGS")
+    time.sleep(2.5)
+    if "settings" not in adb.top_activity().lower():
+        pytest.skip("settings main screen unavailable")
+
+
+def _compact(token, **params):
+    s, b = adb.http("POST", "/v1/dump", token, dict(params, format="compact"))
+    assert s == 200 and b["ok"], b
+    return [line.split("\t") for line in b["data"].splitlines() if line]
+
+
+def _label(cols):
+    return cols[2] if len(cols) > 2 else ""
+
+
+def test_http_interactive_rows_carry_their_label(token):
+    # a settings row is a clickable LinearLayout holding its name in child
+    # TextViews -- the dominant android pattern. unless the row inherits that
+    # text, an agent sees 25 indistinguishable containers and the only named node
+    # on the screen is the scroll container, so it taps that instead.
+    _settings_main()
+    titles = [_label(c) for c in _compact(token, filter="text")]
+    titles = [t for t in titles if len(t) >= 4]
+    rows = _compact(token, filter="interactive")
+    adb.http("POST", "/v1/global", token, {"nav": "home"})
+    assert rows, "no interactive rows on the settings main screen"
+    named = [c for c in rows if _label(c)]
+    assert len(named) * 2 >= len(rows), \
+        f"{len(rows) - len(named)} of {len(rows)} interactive rows are unlabelled: {rows}"
+    carried = [t for t in titles if any(t in _label(c) for c in rows)]
+    assert len(carried) >= 3, f"row text never reached its clickable row: {titles} vs {rows}"
+
+
+def test_http_interactive_is_actionable_only(token):
+    # a focusable-only container is not somewhere to tap: every node offered as
+    # interactive must support an action mimic can actually perform. mimic's own
+    # ui is the subject because it reliably holds focusable-only nodes (a
+    # ScrollView whose content fits, and a focusable TextView) -- the settings
+    # main screen happens to have none, so it cannot fail this check.
+    adb.shell("am", "start", "-n", adb.ACTIVITY)
+    time.sleep(1.5)
+    s, b = adb.http("POST", "/v1/dump", token,
+                    {"filter": "all", "format": "flat", "fields": "class,actions"})
+    assert s == 200 and b["ok"] and b["data"], b
+    focus_only = [n for n in b["data"]
+                  if n.get("actions") and not set(n["actions"]) & ACTIONABLE]
+    assert focus_only, "no focusable-only node on screen; the check cannot fail here"
+    s, b = adb.http("POST", "/v1/dump", token,
+                    {"filter": "interactive", "format": "flat", "fields": "class,actions"})
+    assert s == 200 and b["ok"] and b["data"], b
+    for node in b["data"]:
+        assert set(node.get("actions") or []) & ACTIONABLE, node
+
+
+def test_http_compact_honours_fields(token):
+    # compact is the format SKILL.md recommends to agents, so it must be able to
+    # carry the field that tells a button from a scroll container.
+    cols = _compact(token, filter="interactive", fields="center,label,actions")
+    assert cols
+    for c in cols:
+        assert len(c) == 3, c
+        assert "," in c[0]
+        assert c[2], c  # the actions column names at least one action
+
+
+def test_http_filters_combine(token):
+    # the tree holds rows below the fold, whose centres are off-screen and never
+    # meaningful to tap. combining filters is how an agent asks for only the rows
+    # it can reach, without a second dump to join against.
+    _settings_main()
+    every = _compact(token, filter="interactive")
+    shown = _compact(token, filter="interactive,visible")
+    adb.http("POST", "/v1/global", token, {"nav": "home"})
+    assert shown and len(shown) <= len(every), (len(shown), len(every))
+    for c in shown:
+        cx, cy = (int(v) for v in c[0].split(","))
+        assert cx >= 0 and cy >= 0, c
 
 
 def test_http_find_flat(token):
     adb.shell("am", "start", "-n", adb.ACTIVITY)  # our own ui is in front
+    time.sleep(1.0)  # the window must actually be up, or find has nothing to read
     s, b = adb.http("POST", "/v1/find", token, {"query": "surface", "by": "text"})
-    assert s == 200 and b["ok"] and isinstance(b["data"], list)
+    assert s == 200 and b["ok"] and isinstance(b["data"], list), b
 
 
 def test_http_fields_selection(token):
@@ -390,6 +483,16 @@ def test_mcp_tools_list(token):
     names = [t["name"] for t in b["result"]["tools"]]
     assert {"mimic_dump", "mimic_find", "mimic_wait", "mimic_tap", "mimic_status",
             "mimic_screenshot", "mimic_packages"} <= set(names)
+
+
+def test_mcp_filter_schema_allows_combination(token):
+    # the schema is what an mcp client shows the model, so it must not say a
+    # combined filter is illegal.
+    s, b = adb.mcp(token, "tools/list")
+    tools = {t["name"]: t for t in b["result"]["tools"]}
+    f = tools["mimic_dump"]["inputSchema"]["properties"]["filter"]
+    assert "enum" not in f, f
+    assert "," in f["description"], f
 
 
 def test_mcp_screenshot_image_block(token):

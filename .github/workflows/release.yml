@@ -1,0 +1,122 @@
+# build the release apk whenever a vX.Y.Z tag is pushed, then attach it to a
+# github release named after the tag.
+#
+# the version comes from app/build.gradle.kts (defaultConfig.versionName), not
+# from this workflow: a release must be reproducible from the tagged source
+# alone, so nothing version-shaped is injected here. the tag is only checked
+# against the build file.
+#
+# the apk is signed with the project's persistent release key, held in the
+# MIMIC_KEYSTORE_* secrets. never fall back to the debug key: android refuses to
+# update an installed app whose signing key changed (see CONTRIBUTING.md).
+#
+# the jdk and gradle come from mise.toml so ci builds with the pinned versions.
+# the android sdk is not vendored (license-gated and large), so the runner's
+# preinstalled one is pointed at through local.properties.
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write # create the release and upload the apk
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "name=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: tag is not already released
+        # gh release create fails late and cryptically on a tag that already has a
+        # release. five releases (v0.1.0..v0.5.0) predate this workflow, so a
+        # re-pushed tag is a live possibility rather than a hypothetical.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "!! $GITHUB_REF_NAME is already released; delete it first or tag a" \
+                 "new version (this workflow will not overwrite a published release)" >&2
+            exit 1
+          fi
+      - name: point the build at the runner's android sdk
+        # mise.toml defaults ANDROID_HOME to ~/android-sdk, which does not exist
+        # here. local.properties takes precedence over it (CONTRIBUTING.md), so
+        # this is the documented escape hatch rather than a ci-only special case.
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          sdkmanager="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" "platforms;android-34" "build-tools;34.0.0"
+      - uses: jdx/mise-action@v2 # installs mise + the pinned tools from mise.toml
+      - name: release keystore
+        # decoded outside the workspace so it cannot be picked up by a later step
+        # or archived with the build output.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MIMIC_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "!! MIMIC_KEYSTORE_BASE64 is not set; refusing to publish an" \
+                 "unsigned or debug-signed apk (see CONTRIBUTING.md)" >&2
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+      - name: lint
+        # the e2e suite needs a device, so it cannot run here; lint is the part of
+        # `make precommit` that ci can carry.
+        run: make lint
+      - name: build release apk
+        env:
+          # secret names follow the VEILIST_* convention; the env names are the
+          # ones app/build.gradle.kts already reads (PASS, not PASSWORD).
+          MIMIC_KEYSTORE: ${{ runner.temp }}/release.jks
+          MIMIC_KEYSTORE_PASS: ${{ secrets.MIMIC_KEYSTORE_PASSWORD }}
+          MIMIC_KEY_ALIAS: ${{ secrets.MIMIC_KEY_ALIAS }}
+          MIMIC_KEY_PASS: ${{ secrets.MIMIC_KEY_PASSWORD }}
+        run: make release
+      - name: confirm the apk carries the release key
+        # a misconfigured secret otherwise leaves the apk unsigned or debug-signed
+        # and publishes something nobody can upgrade from.
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$apk" ]; then
+            echo "!! $apk missing; the signing env did not take and the build" \
+                 "produced an unsigned apk" >&2
+            ls -l app/build/outputs/apk/release/ >&2
+            exit 1
+          fi
+          # the tag must match the version the apk actually carries. read it from
+          # the built artifact rather than by parsing the build file: versionName
+          # is derived there (from versionMajor/Minor/Patch), so any text-matching
+          # check silently stops matching the moment that derivation is refactored.
+          aapt2="$(ls "$ANDROID_SDK_ROOT"/build-tools/*/aapt2 | tail -1)"
+          built="$("$aapt2" dump badging "$apk" \
+            | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
+          if [ "$built" != "${{ steps.v.outputs.name }}" ]; then
+            echo "!! tag ${{ steps.v.outputs.name }} != versionName $built in the built apk" >&2
+            exit 1
+          fi
+          echo "apk carries versionName $built"
+          apksigner="$(ls "$ANDROID_SDK_ROOT"/build-tools/*/apksigner | tail -1)"
+          "$apksigner" verify --print-certs "$apk" > certs.txt
+          if grep -q "CN=Android Debug" certs.txt; then
+            echo "!! apk is debug-signed" >&2
+            exit 1
+          fi
+          grep "SHA-256 digest" certs.txt
+          mv "$apk" "mimic-${{ steps.v.outputs.name }}.apk"
+      - name: clean up the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+      - name: create github release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "mimic-${{ steps.v.outputs.name }}.apk"

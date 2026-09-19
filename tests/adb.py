@@ -48,6 +48,20 @@ def device_available():
     return out.returncode == 0 and out.stdout.strip() == "device"
 
 
+def wake():
+    """turn the screen on if it slept. does not dismiss a keyguard -- see locked()."""
+    if "mScreenState=OFF" in shell("dumpsys", "nfc"):
+        shell("input", "keyevent", "KEYCODE_WAKEUP")
+        time.sleep(1.0)
+
+
+def locked():
+    """is a keyguard covering the screen? the ui harness drives the app through
+    uiautomator, which sees the lock screen rather than the app, so every fixture
+    would otherwise fail with an unrelated 'widget not found'."""
+    return "isKeyguardShowing=true" in shell("dumpsys", "window")
+
+
 # ---- setup ----
 
 def install():
@@ -72,7 +86,28 @@ def launch():
 
 
 def forward():
+    """map the host port to the device's, and prove THIS device got it.
+
+    the host side of a forward is global across adb servers, but `adb forward`
+    reports success either way -- so when another server (another phone, or an
+    emulator on another lane) already holds the port, every http request quietly
+    goes to THAT device. the suite then installs onto one device and tests
+    another, which shows up as unauthorized-everywhere if the tokens differ and,
+    far worse, as a green run if they happen not to."""
     adb("forward", f"tcp:{PORT}", f"tcp:{PORT}")
+    # match on the serial, not just the port: a server adopts every running
+    # emulator whatever --one-device says, so "some device here holds it" is not
+    # "the device under test holds it".
+    serial = adb("get-serialno").stdout.strip()
+    held = [ln.split() for ln in adb("forward", "--list").stdout.splitlines()]
+    port = f"tcp:{PORT}"
+    if not any(len(p) >= 2 and p[0] == serial and p[1] == port for p in held):
+        owner = next((p[0] for p in held if len(p) >= 2 and p[1] == port), "another adb server")
+        raise AssertionError(
+            f"host port {PORT} is forwarded to {owner}, not to {serial}, so http "
+            f"requests would reach a different device than the one under test. "
+            f"free it with `adb forward --remove {port}` on whichever server holds it."
+        )
 
 
 # ---- ui automation ----
@@ -159,17 +194,42 @@ def reveal_token():
         tap_node(clear)
         time.sleep(0.4)
     scroll_top()
+    before = _creds_text()
     tap_node(node_with(ui(), "reveal legacy token"))
-    # the creds field uniquely contains "x-mimic-token"; the token is the only
-    # long base64url run in it.
-    creds = node_with(ui(), "x-mimic-token")
-    text = creds.get("text") if creds is not None else ""
-    m = _TOKEN_RE.search(text or "")
+    text = _await_creds_change(before)
+    m = _TOKEN_RE.search(text)
     assert m, f"token not found in ui: {text!r}"
     # tokens default to 'ask'; flip this (now lone) client to allow-all so the
     # suite never triggers an on-device prompt that would need a manual tap.
     _make_lone_client_allow_all()
     return m.group(1)
+
+
+def _creds_text():
+    """the creds field uniquely contains "x-mimic-token"; the token is the only
+    long base64url run in it."""
+    node = node_with(ui(), "x-mimic-token")
+    return (node.get("text") if node is not None else "") or ""
+
+
+def _await_creds_change(before, timeout=5.0):
+    """wait for the creds field to show a token the reveal tap actually produced.
+
+    the field can still be showing a token from an earlier reveal -- one that the
+    "revoke all" above has just invalidated. reading it without requiring a CHANGE
+    cannot tell the new token from the stale one, so a tap that missed returns a
+    revoked token and every later test fails as an unexplained 401."""
+    deadline = time.monotonic() + timeout
+    while True:
+        text = _creds_text()
+        if text and text != before:
+            return text
+        assert time.monotonic() < deadline, (
+            f"credentials field never changed after tapping reveal (still {before!r}); "
+            "the tap likely missed -- returning this token would fail every later "
+            "test as unauthorized"
+        )
+        time.sleep(0.3)
 
 
 def _make_lone_client_allow_all():

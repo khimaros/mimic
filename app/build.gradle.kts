@@ -3,6 +3,39 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// THE version -- the only line to edit for a release. no "v" here: this is the
+// user-visible versionName (it reaches BuildConfig.VERSION_NAME and the `status`
+// payload). the git tag that publishes it prepends one, `v0.6.0`, and the release
+// workflow strips it before comparing. versionCode is derived below, so the tag,
+// the name and the code cannot disagree.
+val mimicVersionName = "0.6.0"
+
+// MAJOR * 10^7 + MINOR * 10^5 + PATCH * 10^3. fixed field widths keep the code
+// monotonic across every bump -- 0.9.0 (900000) < 0.10.0 (1000000) < 1.0.0
+// (10000000) -- which android requires to accept an update; a plain digit
+// concatenation breaks exactly there. the low three digits are reserved for a
+// per-abi offset (+1 armeabi-v7a, +2 arm64-v8a, +3 x86, +4 x86_64) should the app
+// ever carry native code and split per architecture. it has none today, so it
+// ships one universal apk and the offset stays 000.
+//
+// a malformed version fails the build here rather than silently producing a code
+// that is wrong, or worse, lower than the last release.
+val mimicVersionCode = run {
+    val parts = mimicVersionName.split(".")
+    require(parts.size == 3) {
+        "version must be MAJOR.MINOR.PATCH, got \"$mimicVersionName\""
+    }
+    val (major, minor, patch) = parts.map {
+        it.toIntOrNull() ?: throw IllegalArgumentException(
+            "version part \"$it\" is not a number, in \"$mimicVersionName\""
+        )
+    }
+    require(major >= 0 && minor in 0..99 && patch in 0..99) {
+        "minor and patch must be 0..99 to stay monotonic, got \"$mimicVersionName\""
+    }
+    major * 10_000_000 + minor * 100_000 + patch * 1_000
+}
+
 android {
     namespace = "com.khimaros.mimic"
     compileSdk = 34
@@ -11,8 +44,8 @@ android {
         applicationId = "com.khimaros.mimic"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.5.0"
+        versionCode = mimicVersionCode
+        versionName = mimicVersionName
     }
 
     // env-gated release signing; the keystore stays out of the repo. set

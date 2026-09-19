@@ -9,6 +9,16 @@ import pytest
 def require_device():
     if not adb.device_available():
         pytest.skip("no adb device attached; skipping e2e", allow_module_level=False)
+    # a sleeping screen is just woken; a keyguard is the user's to dismiss. without
+    # this the whole suite fails in setup with "tab not found", which says nothing
+    # about the real cause.
+    adb.wake()
+    if adb.locked():
+        pytest.skip("device is locked; unlock it to run the e2e suite")
+    # claim the host port before touching the device, so a collision with another
+    # adb server is named up front rather than after an install onto a device the
+    # http tests will not actually be talking to.
+    adb.forward()
 
 
 @pytest.fixture(scope="session")

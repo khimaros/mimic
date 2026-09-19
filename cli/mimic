@@ -505,7 +505,10 @@ setup (start pairing in the app first to get a code):
 
 view (filter/query run on-device to keep output small):
   mimic dump [--filter interactive|text|visible|all] [--format tree|flat|compact]
-            [--max-depth N] [--package PKG] [--fields class,text,desc,id,bounds,center,actions]
+            [--max-depth N] [--package PKG] [--fields class,text,desc,label,id,bounds,center,actions]
+                  (--filter takes a comma list and requires all of them:
+                   --filter interactive,visible surveys what is on screen and actionable.
+                   --fields picks the compact columns, in the order given)
   mimic find QUERY [--by text|id|class|desc] [--match exact|contains|regex] [+ dump opts]
 
 interact:
@@ -528,7 +531,7 @@ interact:
 
 output is the raw json envelope on stdout; nonzero exit on error.
 prefix any command with --pretty for human-friendly output (requires jq):
-  mimic --pretty dump --filter interactive --format compact
+  mimic --pretty dump --filter interactive,visible --format compact
 EOF
 }
 

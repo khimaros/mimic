@@ -127,13 +127,13 @@ object Mcp {
     private fun tool(name: String, description: String, schema: JSONObject): JSONObject =
         JSONObject().put("name", name).put("description", description).put("inputSchema", schema)
 
-    private val FILTER = prop("string", "interactive | text | visible | all", listOf("interactive", "text", "visible", "all"))
+    private val FILTER = prop("string", "interactive | text | visible | all; comma-combine to require several at once, e.g. 'interactive,visible' for the rows you can actually reach")
     private val FORMAT = prop("string", "tree | flat | compact", listOf("tree", "flat", "compact"))
     private val BY = prop("string", "text | id | class | desc", listOf("text", "id", "class", "desc"))
     private val MATCH = prop("string", "exact | contains | regex", listOf("exact", "contains", "regex"))
     private val DEPTH = prop("integer", "max tree depth (-1 = unlimited)")
     private val PACKAGE = prop("string", "restrict to one app package")
-    private val FIELDS = prop("string", "comma list: class,text,desc,id,bounds,center,actions")
+    private val FIELDS = prop("string", "comma list: class,text,desc,label,id,bounds,center,actions. in compact format these become the columns, in the order given")
 
     private val TOOLS: JSONArray = JSONArray(listOf(
         tool("mimic_status", "report whether the service is enabled and which surfaces are on", schema(emptyList(), emptyMap())),

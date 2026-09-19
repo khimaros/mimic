@@ -28,13 +28,24 @@ that local server require.
 - R1.2 each node carries at least: a role/class, text, content-description,
   resource-id, screen bounds, center coordinates, and which actions it supports
   (clickable, long-clickable, editable, scrollable, focusable, checkable).
+- R1.2a a node that supports an action but carries no text or content-description
+  of its own takes a label from its descendants, so an actionable row is never
+  anonymous -- android's dominant pattern puts a row's name in child text views
+  of a clickable container, and a dump of unnamed containers is one an agent
+  cannot choose from. the node's own text/content-description are never
+  overwritten, so a borrowed label stays distinguishable from a real one.
 - R1.3 support server-side filtering to reduce returned size: interactive-only,
   text-bearing-only, visible-only, depth limit, and package scope. filtering
-  happens on the device so the wire payload stays small.
+  happens on the device so the wire payload stays small. filters combine and all
+  must pass, so one dump can ask for what is interactive *and* visible without a
+  second dump to join against. interactive means the node carries an action the
+  service can perform; focusability alone does not make it a target.
 - R1.4 support server-side query: find nodes by text, resource-id, class, or
   content-description, with exact, contains, or regex matching.
 - R1.5 support output shaping: tree vs flat vs compact form, and selection of
-  which fields are included.
+  which fields are included. field selection applies to every format -- in
+  compact the chosen fields are the columns, in the order asked for -- so the
+  cheapest format can still carry whichever attribute the caller needs.
 - R1.6 support waiting for a node matching a query to appear in the active window,
   polling server-side with a configurable timeout and a sensible default; return
   the matches when found, or a clear timeout failure. (preferable to a client-side

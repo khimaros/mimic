@@ -65,15 +65,52 @@ everything and filtering locally:
   ```
   mimic find "sign in"
   ```
-- **filter when you must dump:** `--filter interactive` keeps actionable nodes;
-  `--filter text` keeps text-bearing nodes.
+- **filter when you must dump:** `--filter interactive` keeps nodes carrying an
+  action (click, long-click, edit, scroll, check); `--filter text` keeps
+  text-bearing nodes; `--filter visible` keeps what is on screen. **combine them
+  with a comma** -- every one must pass:
+  ```
+  mimic dump --filter interactive,visible --format compact
+  ```
+  that is the survey to reach for: what is on screen *and* actionable. without
+  `visible` the tree also holds rows below the fold, whose coordinates are
+  off-screen (often negative) and never meaningful to tap.
 - **use the compact format:** `data` becomes a single newline-joined string of
   `cx,cy<TAB>class<TAB>label<TAB>id` lines -- the cheapest representation, and the
-  leading `cx,cy` is exactly where to tap:
-  ```
-  mimic dump --filter interactive --format compact
-  ```
-- **trim further:** `--fields center,text,id`, `--max-depth N`, `--package PKG`.
+  leading `cx,cy` is exactly where to tap.
+- **trim further:** `--fields center,label,id`, `--max-depth N`, `--package PKG`.
+  in compact, `--fields` picks the columns and their order, so
+  `--fields center,label,actions` tells you where to tap, what it is called, and
+  what it supports.
+
+### labels come from the row, not just the node
+
+android's dominant pattern puts a row's name in child `TextView`s of a clickable
+container, so mimic gives a node with an action but no text of its own the text of
+its descendants. a settings screen reads as:
+
+```
+504,439	LinearLayout	Network & internet / Mobile, Wi-Fi, hotspot
+504,608	LinearLayout	Connected devices / Bluetooth, pairing
+```
+
+rather than a column of unnamed `LinearLayout`s. the title and its summary are
+joined with ` / `, since the summary is often what tells two rows apart. in json,
+`text`/`desc` stay the node's own and `label` appears only when it was borrowed --
+so a node with `text` named itself, and a node with only `label` took it from its
+children.
+
+to act on a row, tap its `cx,cy` -- that is what the first column is for. a
+joined label is not a queryable string (no single node holds it), so
+`click --text` wants a substring that one node really has:
+
+```
+mimic click --text "Network & internet"     # the title: a real node's text
+mimic tap 504 439                           # or just the coordinates
+```
+
+`click` walks up from the matched node to the nearest clickable ancestor, so
+clicking the title hits the row.
 
 ## commands
 
@@ -81,10 +118,13 @@ everything and filtering locally:
 mimic status                          service enabled? which surfaces are on?
 
 view (filtering/query run on-device):
-  mimic dump [--filter interactive|text|visible|all]
+  mimic dump [--filter interactive|text|visible|all]   comma-combine to require
+                                                       several: interactive,visible
             [--format tree|flat|compact]
             [--max-depth N] [--package PKG]
-            [--fields class,text,desc,id,bounds,center,actions]
+            [--fields class,text,desc,label,id,bounds,center,actions]
+                                                       in compact these are the
+                                                       columns, in the order given
   mimic find QUERY [--by text|id|class|desc]
                   [--match exact|contains|regex]
                   [+ any dump option]
@@ -152,7 +192,10 @@ command prints its error to stderr and exits nonzero.
 
 ```
 # what can i interact with on this screen?
-mimic dump --filter interactive --format compact
+mimic dump --filter interactive,visible --format compact
+
+# the same, plus what each row supports (click? scroll?)
+mimic dump --filter interactive,visible --format compact --fields center,label,actions
 
 # log in
 mimic click --id com.example.app:id/username

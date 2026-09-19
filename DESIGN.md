@@ -78,7 +78,7 @@ commands have surface-agnostic short names (`Cmd`): `DUMP`, `FIND`, `TAP`,
 `LONG_PRESS`, `SWIPE`, `CLICK`, `SET_TEXT`, `GLOBAL`, `SCROLL`, `WAIT`, `PACKAGES`,
 `LAUNCH`, `SCREENSHOT`, `STATUS` (plus the `PAIR` handshake). arguments are uniform
 string keys (`Extras`): view -> `format` (tree|flat|compact), `filter`
-(interactive|text|visible|all), `max_depth`, `package`, `fields`, and for query
+(interactive|text|visible|all, comma-combinable), `max_depth`, `package`, `fields`, and for query
 `by` (text|id|class|desc), `query`, `match` (exact|contains|regex); interact ->
 `x`,`y`,`x2`,`y2`,`duration`,`nav`,`text`; scroll -> `direction`
 (up|down|left|right), plus a query (scroll until found), `steps`/`timeout`, and
@@ -116,6 +116,7 @@ a node is serialized from `AccessibilityNodeInfo` into:
 
 ```
 { "class": "android.widget.Button", "text": "submit", "desc": "submit form",
+  "label": "submit",                                    // omitted when text/desc has it
   "id": "com.app:id/submit", "bounds": [l,t,r,b], "center": [cx,cy],
   "actions": ["click","focus"], "children": [ ... ] }   // children: tree only
 ```
@@ -123,12 +124,28 @@ a node is serialized from `AccessibilityNodeInfo` into:
 filtering and query run **on the device**, before serialization, so the returned
 payload is small -- the primary lever for keeping agent context small:
 
-- `filter=interactive` keeps actionable nodes; `filter=text` keeps text-bearing
-  nodes; `filter=visible` keeps user-visible nodes (tree mode keeps ancestors of
-  matches for shape).
+- `filter=interactive` keeps nodes carrying an action mimic can perform (click,
+  long-click, edit, scroll, check -- focusability alone is not one, so a
+  focusable container is not offered as somewhere to tap); `filter=text` keeps
+  text-bearing nodes; `filter=visible` keeps user-visible nodes (tree mode keeps
+  ancestors of matches for shape). filters are comma-combinable and ANDed:
+  `filter=interactive,visible` is the element table of what is on screen *and*
+  actionable, with no off-screen coordinates in it.
 - `max_depth` caps depth; `package` restricts to one app.
-- `FIND` returns a flat match list; `format=compact` emits one terse line per node
-  (`cx,cy<tab>class<tab>label<tab>id`); `fields` drops unneeded attributes.
+- `FIND` returns a flat match list; `format=compact` emits one terse line per node,
+  a tab-delimited column per field (`cx,cy<tab>class<tab>label<tab>id` by default);
+  `fields` drops unneeded attributes, and in compact it chooses the columns and
+  their order.
+
+`label` is the node's name. android's dominant pattern puts a row's name in child
+`TextView`s of a clickable `LinearLayout`, so a node that carries an action but no
+text of its own borrows the text of its descendants. descent stops at a descendant
+that is itself clickable -- that text names the child, not this node -- and is
+bounded by `LABEL_MAX_DEPTH`/`LABEL_MAX_PARTS` so a scroll container cannot absorb
+the screen into one label. a row's title *and* summary both make the label, since
+the summary is often what tells two rows apart. `text`/`desc` stay the node's own,
+and json omits `label` when they already carry it, so nothing is serialized twice:
+a node with `text` names itself, a node with only `label` borrowed it.
 
 interaction is **stateless**: `CLICK by=id` re-resolves the node at call time, so a
 tree read earlier cannot cause a click on a stale coordinate.

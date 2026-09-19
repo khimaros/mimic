@@ -97,7 +97,7 @@ object Extras {
 
     // view shaping
     const val FORMAT = "format"        // tree | flat | compact
-    const val FILTER = "filter"        // interactive | text | visible | all
+    const val FILTER = "filter"        // interactive | text | visible | all (comma-combinable, ANDed)
     const val MAX_DEPTH = "max_depth"
     const val PACKAGE = "package"
     const val FIELDS = "fields"        // comma-separated subset of NODE_FIELDS
@@ -210,7 +210,13 @@ object Defaults {
 }
 
 // the full set of serializable node attributes; the caller may request a subset
-// via the `fields` extra. "children" is only meaningful in tree format.
+// via the `fields` extra. "children" is only meaningful in tree format. "label"
+// is the node's name -- its own text/desc, else the text borrowed from its
+// descendants when it is something you can act on.
 val NODE_FIELDS = listOf(
-    "class", "text", "desc", "id", "bounds", "center", "actions", "children",
+    "class", "text", "desc", "label", "id", "bounds", "center", "actions", "children",
 )
+
+// the compact columns when the caller does not choose `fields`:
+// "cx,cy<TAB>class<TAB>label<TAB>id" -- everything needed to tap, nothing else.
+val COMPACT_FIELDS = listOf("center", "class", "label", "id")

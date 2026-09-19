@@ -14,8 +14,13 @@ to local automation over three independent, token-gated surfaces:
 - read the active window's accessibility tree as json, with per-node bounds,
   tap coordinates, and supported actions.
 - filter and query the tree **on the device** (interactive-only, text-only,
-  by-text/id/class/desc, regex) so an agent sends and receives the minimum
-  context.
+  visible-only -- combinable, so `interactive,visible` is one dump of what is on
+  screen and actionable -- plus by-text/id/class/desc and regex) so an agent
+  sends and receives the minimum context.
+- name the rows: a clickable container with no text of its own takes its label
+  from its child `TextView`s, so a screen reads as
+  `Network & internet / Mobile, Wi-Fi, hotspot` rather than a list of unnamed
+  layouts.
 - tap / long-press / swipe by coordinate; click or set-text on a node found by
   text or resource-id; scroll until a node appears; back / home / recents /
   notifications.
@@ -78,6 +83,7 @@ access to the phone.
 ```
 mimic status                       # service enabled? which surfaces on?
 mimic dump --filter interactive    # actionable nodes only, as json
+mimic dump --filter interactive,visible --format compact   # the on-screen element table
 mimic find login --by text         # nodes whose text contains "login"
 mimic tap 540 1200                 # tap a coordinate
 mimic click --id com.app:id/submit # click a node by resource-id
@@ -98,7 +104,7 @@ dump becomes tab-separated lines). `--pretty` requires `jq` and errors clearly i
 it is missing:
 
 ```
-mimic --pretty dump --filter interactive --format compact
+mimic --pretty dump --filter interactive,visible --format compact
 ```
 
 see [SKILL.md](SKILL.md) for the full `mimic` cli reference and guidance for

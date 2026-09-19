@@ -175,7 +175,7 @@ object Commands {
     // detect that a scroll no longer moves content (the end has been reached).
     private val SIGNATURE_CFG = ViewConfig(
         format = "compact", filter = "text", maxDepth = Defaults.MAX_DEPTH, pkg = null,
-        fields = NODE_FIELDS.toSet(), by = null, query = null, match = Defaults.MATCH,
+        fields = null, by = null, query = null, match = Defaults.MATCH,
     )
 
     // scroll the active window in a direction. with a query, keep scrolling until a
@@ -191,8 +191,8 @@ object Commands {
         // the stop condition is an *on-screen* match. the accessibility tree can
         // include off-screen rows (e.g. a settings list), so match only visible
         // nodes -- otherwise scroll would "find" a node still below the fold that
-        // the user can neither see nor tap. visibility overrides the filter.
-        var cfg = ViewConfig.from(get).copy(filter = "visible")
+        // the user can neither see nor tap. visibility narrows the caller's filter.
+        var cfg = ViewConfig.from(get).plusFilter("visible")
         if (get(Extras.FORMAT) == null) cfg = cfg.copy(format = "flat")
         val maxSteps = stepCount(get, Defaults.SCROLL_MAX_STEPS)
         val deadline = System.currentTimeMillis() + waitTimeoutMs(get)
